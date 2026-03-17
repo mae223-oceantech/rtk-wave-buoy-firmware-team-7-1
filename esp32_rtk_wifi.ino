@@ -412,9 +412,9 @@ void beginClient() {
   while (ntripRunning) {
 
     // --- BLE command processing ---
-    if (bleRxBuffer.length() > 0) {
-      String cmd = bleRxBuffer;
-      bleRxBuffer = "";
+    if (bleDataReady) {
+      bleDataReady = false;
+      String cmd = String(bleRxBuf);
       handleBLECommand(cmd);
       if (!ntripRunning) break;  // RESET command sets ntripRunning = false
     }
