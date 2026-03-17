@@ -60,6 +60,7 @@ SFE_UBLOX_GNSS myGNSS;
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include "esp_mac.h"
 
 #define BLE_SERVICE_UUID  "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 #define BLE_CHAR_RX_UUID  "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"  // phone -> buoy
@@ -68,7 +69,8 @@ SFE_UBLOX_GNSS myGNSS;
 BLEServer* pServer = NULL;
 BLECharacteristic* pTxChar = NULL;
 bool bleConnected = false;
-volatile String bleRxBuffer = "";
+char bleRxBuf[256] = {0};
+volatile bool bleDataReady = false;
 
 // ============================================================
 // Runtime NTRIP config - loaded from NVS, falls back to secrets.h
@@ -268,7 +270,9 @@ class ServerCallbacks : public BLEServerCallbacks {
 
 class RxCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic* pChar) {
-    bleRxBuffer = pChar->getValue().c_str();
+    strncpy(bleRxBuf, pChar->getValue().c_str(), sizeof(bleRxBuf) - 1);
+    bleRxBuf[sizeof(bleRxBuf) - 1] = '\0';
+    bleDataReady = true;
   }
 };
 
@@ -347,7 +351,7 @@ void setup() {
   }
   Serial.println();
   buoyPrintln("WiFi connected: " + WiFi.localIP().toString());
-  buoyPrintln("Press button to start NTRIP. BLE: " + String(BLE_DEVICE_NAME));
+  buoyPrintln("Press button to start NTRIP. BLE: " + String(bleName));
 }
 
 // ============================================================
@@ -355,9 +359,9 @@ void setup() {
 // ============================================================
 void loop() {
   // Process incoming BLE commands
-  if (bleRxBuffer.length() > 0) {
-    String cmd = bleRxBuffer;
-    bleRxBuffer = "";
+  if (bleDataReady) {
+    bleDataReady = false;
+    String cmd = String(bleRxBuf);
     handleBLECommand(cmd);
   }
 
