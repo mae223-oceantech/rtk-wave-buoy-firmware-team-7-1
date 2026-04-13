@@ -55,8 +55,18 @@ dkms.conf
 secrets.h
 
 # Jupyter notebooks
-imu_analysis.ipynb
+*.ipynb
+
+# Instructor/dev-only code and data
+drewcode/
+matlab/
 
 # Local SD card data
 ola_data/
+
+# Claude settings
+**/.claude/
+
+# macOS
+.DS_Store
 

@@ -71,26 +71,36 @@ Download **u-center** from u-blox for GPS monitoring and configuration.
 
 ---
 
-## Project Files
-
-### Buoy Combo Sketch (ESP32)
+## Repository Structure
 
 ```
-buoy_combo/
-    buoy_combo.ino      # Main sketch file
-    buoy_combo.h        # Function definitions and implementations
-    secrets.h           # NTRIP credentials (create this yourself)
+OpenLog_Artemis_GNSS_Logging_Modified/   # OLA firmware (Arduino sketch)
+    OpenLog_Artemis_GNSS_Logging_Modified.ino
+    upload_ola_firmware.py               # Apple Silicon: compile + upload script
+
+esp32/                                   # ESP32 sketches
+    buoy_combo.ino                       # Main buoy sketch (cellular NTRIP)
+    buoy_combo.h
+    esp32_rtk_wifi.ino                   # WiFi NTRIP + BLE command interface
+    esp32_rtk.ino
+    esp32_botletic.ino
+
+accelerometer/                           # ICM-20948 and AK09916 datasheets
+    ICM-20948-Datasheet-v1.3.pdf
+    AK09916-Magnetometer-Datasheet.pdf
+
+ubx_parsers/                             # UBX binary to CSV conversion
+    v3_ubx_parser.py
+    v2_ubx_parser.py
+
+tutorials/                               # Student guides and reference docs
+    IMU_STUDENT_GUIDE.md                 # IMU data logging guide (Arduino IDE + CLI)
+    SERIAL_MONITOR_SETUP.md              # TeraTerm (Windows) and CoolTerm (macOS)
+    GETTING_UPDATES.md                   # How to pull instructor updates
+    ACCELEROMETER_PERFORMANCE_GUIDE.md
+    VSCODE_ARDUINO_SETUP.md
+    LOGGING_ANALYSIS.md
 ```
-
-### OpenLog Artemis GNSS Logging Sketch
-
-Download all files from the rtk_wave_buoy GitHub folder titled "OpenLog_Artemis_GNSS_Logging_Modified"
-
-### Data Processing Scripts
-
-- `v2_ubx_parser.py` - Converts UBX files to CSV
-- `v3_fall_parsed_position_graph.m` - GPS data visualization (MATLAB)
-- `simple_IMU_plotting.m` - IMU data visualization (MATLAB)
 
 ---
 
