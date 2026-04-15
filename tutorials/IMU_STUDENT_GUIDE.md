@@ -85,7 +85,7 @@ arduino-cli core install "SparkFun:apollo3@2.2.1"
 ```bash
 arduino-cli lib install "SparkFun u-blox GNSS v3"
 arduino-cli lib install "SparkFun 9DoF IMU Breakout - ICM 20948 - Arduino Library"
-arduino-cli lib install "SdFat"
+arduino-cli lib install "SdFat - Adafruit Fork"
 ```
 
 #### Upload Firmware
@@ -95,7 +95,7 @@ arduino-cli lib install "SdFat"
 3. Run the upload script:
 
 ```bash
-python3 upload_ola_firmware.py
+python3 OpenLog_Artemis_GNSS_Logging_Modified/upload_ola_firmware.py
 ```
 
 This automatically detects the port, compiles, and uploads. Successful output looks like:

@@ -11,7 +11,7 @@ import sys
 import os
 
 FQBN = "SparkFun:apollo3:sfe_artemis_atp"
-SKETCH_PATH = os.path.join(os.path.dirname(__file__), "OpenLog_Artemis_GNSS_Logging_Modified")
+SKETCH_PATH = os.path.dirname(os.path.abspath(__file__))
 
 
 def find_port():
