@@ -55,7 +55,7 @@ dkms.conf
 secrets.h
 
 # Jupyter notebooks (exclude personal notebooks, track student starter notebooks)
-*.ipynb
+# *.ipynb
 !accelerometer/magcal_notebook.ipynb
 
 # Instructor/dev-only code and data
