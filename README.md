@@ -123,17 +123,17 @@ Create a `secrets.h` file in the `esp32/` folder with your NTRIP credentials:
 const char* ssid     = "your_network";
 const char* password = "your_password";
 
-// NTRIP caster credentials
-const char* casterHost   = "rtk2go.com";
+// NTRIP caster credentials (Point One Nav Polaris)
+const char* casterHost   = "polaris.pointonenav.com";
 const uint16_t casterPort = 2101;
-const char* mountPoint   = "BASE_CCS";
-const char* casterUser   = "your_email";
-const char* casterUserPW = "";
+const char* mountPoint   = "POLARIS";
+const char* casterUser   = "your_username";
+const char* casterUserPW = "your_password";
 
 #endif
 ```
 
-> **UCSD users:** Contact your instructor for the NTRIP server address, port, and credentials. Do not commit `secrets.h` to the repository.
+> **Credentials:** Username and password are provided by the instructor. Do not commit `secrets.h` to the repository.
 
 ---
 
