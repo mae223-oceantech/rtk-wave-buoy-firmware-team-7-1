@@ -61,8 +61,8 @@ def parse_ubx_file(filename, output_csv=None):
             elif ident == 'NAV-HPPOSLLH':
                 counts['NAV-HPPOSLLH'] += 1
                 
-                lat = getattr(parsed, 'lat', 0)
-                lon = getattr(parsed, 'lon', 0)
+                lat = getattr(parsed, 'lat', 0) / 1e7
+                lon = getattr(parsed, 'lon', 0) / 1e7
                 height = getattr(parsed, 'height', 0)
                 hMSL = getattr(parsed, 'hMSL', 0)
                 
@@ -92,7 +92,7 @@ def parse_ubx_file(filename, output_csv=None):
                     print(f"First HPPOSLLH: lat={lat_combined:.9f}, hAcc={hppos_msgs[iTOW]['hAcc']*100:.2f}cm")
             
             total = sum(counts.values())
-            if total % 2000 == 0:
+            if total > 0 and total % 2000 == 0:
                 print(f"  {total} messages...")
     
     print(f"\nFound: {counts}")
