@@ -399,15 +399,39 @@ void beginClient()
         Serial.println(F("GGA sent to caster"));
       }
 
-      // NTRIP streams raw RTCM3 frames over TCP after the 200 OK response —
-      // no HTTP chunked encoding. Drain whatever is available into rtcmData.
-      while (ntripClient.available()) {
-        int space = sizeof(rtcmData) - rtcmCount;
-        if (space <= 0) break;
-        int bytesToRead = min((int)ntripClient.available(), space);
-        int bytesRead = ntripClient.read(&rtcmData[rtcmCount], bytesToRead);
-        if (bytesRead <= 0) break;
-        rtcmCount += bytesRead;
+      // Polaris answers NTRIP 2.0 (HTTP/1.1) with chunked transfer encoding:
+      //   <hex chunk size>\r\n<binary RTCM of that size>\r\n<next hex size>...
+      // The chunk framing bytes MUST be stripped before pushing to the F9P,
+      // otherwise the hex digits and \r\n land in the F9P's protocol decoder
+      // as noise and every frame is rejected (MON-COMMS "skipped" climbs to
+      // ~100% of rx, RTK never fixes).
+      while (ntripClient.available())
+      {
+        // Read chunk size line (hex digits followed by \r\n)
+        char chunkSizeBuf[10];
+        int idx = 0;
+        while (ntripClient.available()) {
+          char c = ntripClient.read();
+          if (c == '\n') break;
+          if (c != '\r') chunkSizeBuf[idx++] = c;
+        }
+        chunkSizeBuf[idx] = '\0';
+        int chunkSize = strtol(chunkSizeBuf, NULL, 16);
+        if (chunkSize == 0) break; // last chunk
+
+        // Read exactly chunkSize bytes of RTCM
+        int bytesRead = 0;
+        while (bytesRead < chunkSize && ntripClient.available()) {
+          rtcmData[rtcmCount++] = ntripClient.read();
+          bytesRead++;
+          if (rtcmCount == sizeof(rtcmData)) break;
+        }
+        // Consume trailing \r\n after chunk data
+        while (ntripClient.available()) {
+          char c = ntripClient.read();
+          if (c == '\n') break;
+        }
+        break; // process what we have, come back next loop iteration
       }
 
       if (rtcmCount > 0)
