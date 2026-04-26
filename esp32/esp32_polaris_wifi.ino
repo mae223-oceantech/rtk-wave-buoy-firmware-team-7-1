@@ -9,8 +9,8 @@
     - Direct gpsSerial.write() for RTCM — bypasses SparkFun library overhead
     - HTTP/1.1 with Ntrip-Version: Ntrip/2.0 + chunked transfer decoder
       required for Polaris responses
-    - GGA sent on connect, refreshed every 5 min — appropriate for a
-      slow-moving buoy (drift is small relative to VRS correction scale)
+    - GGA sent on connect, refreshed every 10 s — Polaris VRS expects
+      regular GGA so the synthesized base stays near the rover
     - Reconnect counter + session timer for field diagnostics
     - No BLE
 
@@ -70,11 +70,16 @@ unsigned long lastBlinkTime = 0;
 // RTCM / GGA timing
 long lastReceivedRTCM_ms           = 0;
 const int maxTimeBeforeHangup_ms   = 100000;
-const unsigned long ggaInterval_ms = 300000; // 5 min — buoy drift slow vs VRS scale
+// Polaris VRS expects GGA every 10–30 s so the synthesized base stays near the rover;
+// 5 min was too sparse and let the VRS solution drift relative to actual buoy position.
+const unsigned long ggaInterval_ms = 10000;
 
 // Session diagnostics
 int reconnectCount        = 0;
 unsigned long sessionStart_ms = 0;
+unsigned long rtcmTotalBytes  = 0;
+int desyncSuspectCount    = 0;
+int trailingCRLFMismatch  = 0;
 
 // ============================================================
 // Setup
@@ -155,12 +160,31 @@ void loop() {
   }
 }
 
+// Blocking single-byte read with timeout. Returns -1 on timeout or disconnect.
+// Required for HTTP/1.1 chunked decoder: chunk-size lines and payloads can straddle
+// TCP packet boundaries under WiFi jitter, and a non-blocking read on a momentarily
+// drained socket buffer permanently desyncs the decoder.
+int readByteBlocking(WiFiClient &client, uint32_t timeout_ms) {
+  uint32_t start = millis();
+  while (millis() - start < timeout_ms) {
+    if (client.available()) return client.read();
+    if (!client.connected()) return -1;
+    delay(1);
+  }
+  return -1;
+}
+
 // ============================================================
 // Build NMEA GGA from current ZED-F9P position.
 // Polaris VRS uses this to place the virtual base station near the buoy.
 // quality=0 if no fix yet — Polaris will wait until a valid position arrives.
 // ============================================================
 String buildGGA() {
+  // One PVT poll caches every NAV-PVT field used below; subsequent getters return
+  // cached values instead of issuing eight separate UART polls that each block
+  // RTCM injection to the F9P.
+  myGNSS.getPVT();
+
   double lat = myGNSS.getLatitude()    / 10000000.0;
   double lon = myGNSS.getLongitude()   / 10000000.0;
   double alt = myGNSS.getAltitudeMSL() / 1000.0;
@@ -209,6 +233,8 @@ void beginClient() {
   WiFiClient ntripClient;
   long rtcmCount = 0;
   unsigned long lastGGASent_ms = 0;
+  bool prevConnected = false;
+  unsigned long lastDiag_ms = 0;
 
   Serial.println(F("Subscribing to Polaris caster..."));
 
@@ -229,6 +255,29 @@ void beginClient() {
       }
     }
     lastButtonState = reading;
+
+    // Socket state-transition log — catches silent TCP closes that the
+    // reconnect block alone wouldn't surface as a distinct event.
+    bool nowConnected = ntripClient.connected();
+    if (nowConnected != prevConnected) {
+      Serial.print(F("[socket] "));
+      Serial.print(prevConnected ? F("connected") : F("disconnected"));
+      Serial.print(F(" -> "));
+      Serial.println(nowConnected ? F("connected") : F("disconnected"));
+      prevConnected = nowConnected;
+    }
+
+    // 1 Hz diagnostics — distinguishes decoder desync from stream outage from
+    // F9P-side RTK loss when a session goes bad.
+    if (millis() - lastDiag_ms > 1000) {
+      lastDiag_ms = millis();
+      myGNSS.getPVT();
+      Serial.print(F("[diag] carrier="));   Serial.print(myGNSS.getCarrierSolutionType());
+      Serial.print(F(" siv="));             Serial.print(myGNSS.getSIV());
+      Serial.print(F(" rtcmTotal="));       Serial.print(rtcmTotalBytes);
+      Serial.print(F(" desyncSuspect="));   Serial.print(desyncSuspectCount);
+      Serial.print(F(" crlfMismatch="));    Serial.println(trailingCRLFMismatch);
+    }
 
     // Connect (or reconnect) to caster
     if (!ntripClient.connected()) {
@@ -328,7 +377,7 @@ void beginClient() {
       Serial.print(F("Sent GGA: ")); Serial.print(gga);
     }
 
-    // Refresh GGA every 5 min to keep Polaris VRS position current
+    // Refresh GGA at ggaInterval_ms so Polaris VRS keeps the synthesized base near the rover
     if (ntripClient.connected() && millis() - lastGGASent_ms > ggaInterval_ms) {
       String gga = buildGGA();
       ntripClient.print(gga);
@@ -336,40 +385,83 @@ void beginClient() {
       Serial.println(F("GGA refreshed"));
     }
 
-    // Read chunked RTCM and write directly to ZED-F9P UART
-    if (ntripClient.connected()) {
+    // Read chunked RTCM and write directly to ZED-F9P UART.
+    // All reads are blocking with timeout: chunk-size lines and payloads can
+    // straddle TCP packet boundaries, and a non-blocking read on a momentarily
+    // drained socket buffer permanently desyncs the decoder.
+    if (ntripClient.connected() && ntripClient.available()) {
       rtcmCount = 0;
-      while (ntripClient.available()) {
-        // Decode HTTP/1.1 chunked transfer: read hex chunk size line
-        char chunkSizeBuf[10];
-        int idx = 0;
-        while (ntripClient.available()) {
-          char c = ntripClient.read();
-          if (c == '\n') break;
-          if (c != '\r') chunkSizeBuf[idx++] = c;
-        }
-        chunkSizeBuf[idx] = '\0';
-        int chunkSize = strtol(chunkSizeBuf, NULL, 16);
-        if (chunkSize == 0) break; // zero-size chunk = end of stream
 
-        // Read chunkSize bytes of RTCM data
-        uint8_t rtcmData[512 * 4];
-        int bytesRead = 0;
-        while (bytesRead < chunkSize && ntripClient.available()) {
-          rtcmData[bytesRead++] = ntripClient.read();
-          if (bytesRead == sizeof(rtcmData)) break;
-        }
-        // Consume trailing CRLF after chunk payload
-        while (ntripClient.available()) {
-          char c = ntripClient.read();
-          if (c == '\n') break;
-        }
+      // Read hex chunk-size line, terminated by CRLF. Bounded write to chunkSizeBuf.
+      char chunkSizeBuf[12];
+      int idx = 0;
+      bool sizeReadOk = true;
+      while (idx < (int)sizeof(chunkSizeBuf) - 1) {
+        int b = readByteBlocking(ntripClient, 5000);
+        if (b < 0) { sizeReadOk = false; break; }
+        if (b == '\n') break;
+        if (b != '\r') chunkSizeBuf[idx++] = (char)b;
+      }
+      chunkSizeBuf[idx] = '\0';
 
-        if (bytesRead > 0) {
-          gpsSerial.write(rtcmData, bytesRead); // direct to ZED-F9P UART
-          rtcmCount += bytesRead;
+      if (!sizeReadOk) {
+        Serial.println(F("[desync?] timeout reading chunk size — dropping socket"));
+        ntripClient.stop();
+      } else {
+        long chunkSize = strtol(chunkSizeBuf, NULL, 16);
+
+        if (chunkSize == 0) {
+          // zero-size chunk = end of stream
+        } else if (chunkSize < 0 || chunkSize > 4096) {
+          // Polaris RTCM chunks are well under 4 KB; an oversized parse means
+          // we are reading payload bytes as ASCII hex — decoder is desynced.
+          desyncSuspectCount++;
+          Serial.print(F("[desync?] chunkSize=")); Serial.print(chunkSize);
+          Serial.print(F(" hex='"));               Serial.print(chunkSizeBuf);
+          Serial.println(F("' — dropping socket"));
+          ntripClient.stop();
+        } else {
+          // Consume exactly chunkSize bytes, flushing in buffer-sized passes
+          // so chunks larger than rtcmData still pass through intact.
+          uint8_t rtcmData[1024];
+          long remaining = chunkSize;
+          bool payloadOk = true;
+          while (remaining > 0) {
+            int want = remaining > (long)sizeof(rtcmData) ? (int)sizeof(rtcmData) : (int)remaining;
+            int got = 0;
+            while (got < want) {
+              int b = readByteBlocking(ntripClient, 5000);
+              if (b < 0) { payloadOk = false; break; }
+              rtcmData[got++] = (uint8_t)b;
+            }
+            if (got > 0) {
+              gpsSerial.write(rtcmData, got);
+              rtcmCount      += got;
+              rtcmTotalBytes += got;
+            }
+            if (!payloadOk) break;
+            remaining -= got;
+          }
+
+          if (!payloadOk) {
+            Serial.println(F("[desync?] short read on chunk payload — dropping socket"));
+            ntripClient.stop();
+          } else {
+            // Trailing CRLF after chunk payload — blocking, so it can't be
+            // skipped just because the TCP buffer drained between bytes.
+            int b1 = readByteBlocking(ntripClient, 5000);
+            int b2 = readByteBlocking(ntripClient, 5000);
+            if (b1 != '\r' || b2 != '\n') {
+              trailingCRLFMismatch++;
+              Serial.print(F("[desync?] trailing CRLF mismatch: 0x"));
+              if (b1 < 0) Serial.print(F("--")); else Serial.print((uint8_t)b1, HEX);
+              Serial.print(F(" 0x"));
+              if (b2 < 0) Serial.print(F("--")); else Serial.print((uint8_t)b2, HEX);
+              Serial.println(F(" — dropping socket"));
+              ntripClient.stop();
+            }
+          }
         }
-        break; // one chunk per loop iteration — keeps button/GGA checks responsive
       }
 
       if (rtcmCount > 0) {
