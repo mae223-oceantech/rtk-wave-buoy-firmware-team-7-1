@@ -4,8 +4,9 @@
   Modified for UCSD MAE223 Ocean Technology class
 
   Merges the best of esp32_polaris.ino and esp32_rtk_mae.ino:
-    - Correct ZED-F9P init: no nav-rate override (stays at 1 Hz default),
-      no setPortInput (ZED accepts RTCM3 on all ports by default)
+    - ZED-F9P init: nav rate set to 5 Hz (captures wave motion ~5–20 s
+      periods, well under the F9P's RTK ceiling), no setPortInput
+      (ZED accepts RTCM3 on all UARTs by default)
     - Direct gpsSerial.write() for RTCM — bypasses SparkFun library overhead
     - HTTP/1.1 with Ntrip-Version: Ntrip/2.0 + chunked transfer decoder
       required for Polaris responses
@@ -112,7 +113,15 @@ void setup() {
 
   Serial.print(F("Connecting to WiFi"));
   WiFi.begin(ssid, password);
+  unsigned long wifiStart_ms = millis();
   while (WiFi.status() != WL_CONNECTED) {
+    if (millis() - wifiStart_ms > 30000) {
+      Serial.println();
+      Serial.println(F("ERROR: WiFi connect timed out after 30 s."));
+      Serial.println(F("Check ssid/password in secrets.h, or that the AP is in range."));
+      Serial.println(F("Reset the board after fixing."));
+      while (true) { delay(5000); }
+    }
     delay(500);
     Serial.print(F("."));
   }
@@ -288,10 +297,11 @@ void beginClient() {
       Serial.print(F("Opening socket to ")); Serial.println(casterHost);
 
       if (!ntripClient.connect(casterHost, casterPort)) {
-        Serial.println(F("Connection to caster failed"));
-        ntripRunning = false;
-        digitalWrite(LED_PIN, LOW);
-        return;
+        // Match the post-connect reconnect path: don't kill the session on a
+        // single transient WiFi/TCP blip — back off and let the loop retry.
+        Serial.println(F("Connection to caster failed — retrying in 1 s"));
+        delay(1000);
+        continue;
       }
 
       Serial.print(F("Connected to ")); Serial.print(casterHost);
@@ -411,7 +421,12 @@ void beginClient() {
         long chunkSize = strtol(chunkSizeBuf, NULL, 16);
 
         if (chunkSize == 0) {
-          // zero-size chunk = end of stream
+          // HTTP/1.1 zero-size chunk = end of stream. For a Polaris RTCM
+          // stream this only happens on caster termination or decoder desync;
+          // either way, drop the socket and let the reconnect path run rather
+          // than waiting ~100 s for the RTCM-silence timer to fire.
+          Serial.println(F("[stream] chunkSize=0 (end of stream) — dropping socket"));
+          ntripClient.stop();
         } else if (chunkSize < 0 || chunkSize > 4096) {
           // Polaris RTCM chunks are well under 4 KB; an oversized parse means
           // we are reading payload bytes as ASCII hex — decoder is desynced.
