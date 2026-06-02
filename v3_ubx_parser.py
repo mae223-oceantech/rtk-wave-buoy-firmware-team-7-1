@@ -31,6 +31,8 @@ def parse_ubx_file(filename, output_csv=None):
             
             if ident == 'NAV-PVT':
                 counts['NAV-PVT'] += 1
+                if getattr(parsed, 'month', 0) != 6:
+                    continue
                 pvt_msgs[iTOW] = {
                     'iTOW': iTOW,
                     'year': getattr(parsed, 'year', 0),
